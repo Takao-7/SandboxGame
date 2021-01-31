@@ -72,3 +72,15 @@ Plugins/*/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+# Rider files
+.idea/*
+
+.idea/
+.idea/.idea.SandboxGame/.idea/contentModel.xml
+.idea/.idea.SandboxGame/.idea/encodings.xml
+.idea/.idea.SandboxGame/.idea/indexLayout.xml
+.idea/.idea.SandboxGame/.idea/modules.xml
+.idea/.idea.SandboxGame/.idea/projectSettingsUpdater.xml
+.idea/.idea.SandboxGame/.idea/riderModule.iml
+.idea/.idea.SandboxGame/.idea/workspace.xml
