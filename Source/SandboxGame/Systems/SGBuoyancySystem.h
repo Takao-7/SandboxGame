@@ -9,4 +9,12 @@ namespace SandboxGameCoreSystems
 	void BuoyancySystem(float DeltaSeconds, entt::registry& Registry);
 
     float ToKmh(float SpeedCms);
+
+	
+	bool ActorMultiHitLineTrace(AActor* Actor, TArray<FHitResult>& OutHits, FVector Start, FVector End, ECollisionChannel Channel);
+
+	/**
+	 * @return Volume below water level
+	 */
+	float VoxelizeActor(AActor* Actor, float VoxelSize, float WaterLevel, ECollisionChannel Channel);
 }

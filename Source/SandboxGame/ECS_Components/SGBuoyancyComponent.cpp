@@ -75,29 +75,50 @@ float FSGBuoyancyComponent::GetWaterHeight(FVector Position, float DefaultHeight
 void USGBuoyancyComponentWrapper::BeginPlay()
 {
 	Super::BeginPlay();
-	RegisterComponentWithECS(IECSGameInstanceInterface::GetRegistry(this));
+
+	GetOwner()->OnActorBeginOverlap.AddDynamic(this, &USGBuoyancyComponentWrapper::OnOwnerBeginOverlap);
+	GetOwner()->OnActorEndOverlap.AddDynamic(this, &USGBuoyancyComponentWrapper::OnOwnerEndOverlap);
 }
 
-void USGBuoyancyComponentWrapper::RegisterComponentWithECS(entt::registry& Registry)
+void USGBuoyancyComponentWrapper::RegisterComponentWithECS()
 {
-	IECSComponentWrapper::RegisterComponentWithECS(Registry);
+	Super::RegisterComponentWithECS();
 	EntityHandle.AddComponent<FSGBuoyancyComponent>(DefaultValues);
 }
 
 //////////////////////////////////////////////////
-void USGBuoyancyComponentWrapper::SyncWithECSComponent_Implementation()
-{
-	EntityHandle.GetComponent<FSGBuoyancyComponent>() = DefaultValues;
-}
-
 void USGBuoyancyComponentWrapper::UpdateECSComponent(const FSGBuoyancyComponent& NewValues)
 {
 	DefaultValues = NewValues;
-	SyncWithECSComponent_Implementation();
+	EntityHandle.GetComponent<FSGBuoyancyComponent>() = NewValues;
+}
+
+void USGBuoyancyComponentWrapper::UpdateECSComponent()
+{
+	EntityHandle.GetComponent<FSGBuoyancyComponent>() = DefaultValues;
 }
 
 //////////////////////////////////////////////////
 FSGBuoyancyComponent& USGBuoyancyComponentWrapper::GetComponent() const
 {
 	return EntityHandle.GetComponent<FSGBuoyancyComponent>();
+}
+
+//////////////////////////////////////////////////
+void USGBuoyancyComponentWrapper::OnOwnerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor)
+{
+	if (AWaterBody* WaterBody = Cast<AWaterBody>(OtherActor))
+	{
+		DefaultValues.CurrentWaterBodies.AddUnique(WaterBody);
+		UpdateECSComponent();
+	}
+}
+
+void USGBuoyancyComponentWrapper::OnOwnerEndOverlap(AActor* OverlappedActor, AActor* OtherActor)
+{
+	if (AWaterBody* WaterBody = Cast<AWaterBody>(OtherActor))
+	{
+		DefaultValues.CurrentWaterBodies.RemoveSwap(WaterBody);
+		UpdateECSComponent();
+	}
 }

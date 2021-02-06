@@ -17,7 +17,7 @@ struct SANDBOXGAME_API FSGBuoyancyComponent
     
     /* Distance between line traces. Traces start along the centre line */
     UPROPERTY(EditDefaultsOnly, Category = "Line tracing")
-    FVector2D GridSpacing = { 50.0f, 50.0f };
+    FVector2D GridSpacing = { 10.0f, 10.0f };
 
     /* Trace along this axis (@see bInverseTraceDirection) */
     UPROPERTY(EditDefaultsOnly, Category = "Line tracing")
@@ -62,24 +62,30 @@ struct SANDBOXGAME_API FSGBuoyancyComponent
  * Blueprint component for the buoyancy system
  */
 UCLASS(BlueprintType, Blueprintable, meta = (DisplayName = "SG Buoyancy Component"))
-class SANDBOXGAME_API USGBuoyancyComponentWrapper : public UActorComponent, public IECSComponentWrapper
+class SANDBOXGAME_API USGBuoyancyComponentWrapper : public UECSComponentWrapper
 {
     GENERATED_BODY()
 
-public:
+public:	
     virtual void BeginPlay() override;
+    virtual void RegisterComponentWithECS() override;
 	
-    virtual void RegisterComponentWithECS(entt::registry& Registry) override;
-    virtual void SyncWithECSComponent_Implementation() override;
-
 	/** Override the ECS version of this component with the new given values and sets @see DefaultValues */
     UFUNCTION(BlueprintCallable, Category = "ECS")
     void UpdateECSComponent(const FSGBuoyancyComponent& NewValues);
+	void UpdateECSComponent();
 
 	/** Returns a reference to the ECS component */
     UFUNCTION(BlueprintPure, Category = "ECS")
     FSGBuoyancyComponent& GetComponent() const;
+
+private:
+	UFUNCTION()
+	void OnOwnerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor);
 	
+	UFUNCTION()
+    void OnOwnerEndOverlap(AActor* OverlappedActor, AActor* OtherActor);
+
 protected:
 	/* Default parameters for this component. When changed after BeginPlay(), you have to call UpdateECSComponent() in order to copy the
 	* new values to the ECS component. @see UpdateDefaultsFromECS() */
