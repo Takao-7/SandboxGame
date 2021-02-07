@@ -2,9 +2,12 @@
 
 
 #include "SGBuoyancySystem.h"
+
+#include "SGVoxel.h"
 #include "SandboxGame/SandboxGame.h"
 
 #include "Kismet/KismetSystemLibrary.h"
+#include "Components/BoxComponent.h"
 #include "WaterBodyActor.h"
 
 #include "UEEnTTComponents.h"
@@ -22,11 +25,12 @@ TAutoConsoleVariable<bool> CVar_DebugBuoyancySystem
     ECVF_Default
 );
 
+/* Water density in g/cm^3 */
 TAutoConsoleVariable<float> CVarWaterDensity
 (
     TEXT("SG.WaterDensity"),
     1.0f,
-    TEXT("Set the water density for buoyancy system"),
+    TEXT("Set the water density in g/cm^3 for buoyancy system"),
     ECVF_Cheat
 );
 
@@ -55,232 +59,199 @@ void SandboxGameCoreSystems::BuoyancySystem(float DeltaSeconds, entt::registry& 
         
         FVector BoundsOrigin, BoundsExtent;
         Actor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
-        int32 NumTracesX = (BoundsExtent.X / Buoyancy.GridSpacing.X) * 2;
-        int32 NumTracesY = (BoundsExtent.Y / Buoyancy.GridSpacing.Y) * 2;
-        float Bottom = -BoundsExtent.Z;
 
-        const bool bDisplayDebug = CVar_DebugBuoyancySystem->GetBool();
+        const float VoxelSize = Buoyancy.VoxelSize;
 
-    	VoxelizeActor(*Actor, Buoyancy.GridSpacing.X, .0f, Buoyancy.TraceChannel);
+    	float TotalVolume = .0f;
+    	float TotalBuoyancy = .0f;
+    	FVector AddedLocations = FVector::ZeroVector;
 
-        // Step 1: Apply buoyancy forces at the grid points
-        for (int32 x = -NumTracesX; x < NumTracesX; ++x)
-        {
-            for (int32 y = -NumTracesY; y < NumTracesY; ++y)
+    	auto& VoxelComp = Registry.get_or_emplace<SGVoxel::TVoxelComponent>(Entity, *Actor, VoxelSize);
+    	VoxelComp.ForEach([&](FIntVector Position, float Value)
+        {    		
+            if (Value == .0f)
             {
-                // Line traces to find surfaces
-                FVector Start = FVector(x * Buoyancy.GridSpacing.X, y * Buoyancy.GridSpacing.Y, Bottom);
-            	Start = BoundsOrigin + FVector(x * Buoyancy.GridSpacing.X, y * Buoyancy.GridSpacing.Y, .0f);
-            	Start.Z -= BoundsExtent.Z;                
-                FVector End = Start + FVector::UpVector * FMath::Abs(Bottom) * 2.0f;
-
-                TArray<FHitResult> Hits;
-            	// if (!ActorMultiHitLineTrace(*Actor, Hits, Start, End, Buoyancy.TraceChannel))
-            	// {
-            	// 	continue;
-            	// }
-
-            	// TArray<TEnumAsByte<EObjectTypeQuery>> Types =
-            	// {
-            	// 	UEngineTypes::ConvertToObjectType(SimulatingComponent->GetCollisionObjectType())
-            	// };
-            	// if (!UKismetSystemLibrary::LineTraceMultiForObjects(*Actor, Start, End, Types, true, TArray<AActor*>(),
-            	// 													EDrawDebugTrace::ForOneFrame, Hits, false))
-            	// {
-            	// 	continue;
-            	// }   
-            	
-            	// if (!UKismetSystemLibrary::BoxTraceMulti(*Actor, Start, End, FVector(Buoyancy.GridSpacing/2.0f, 1.0f),
-            	// 	FRotator::ZeroRotator,
-            	// 	UEngineTypes::ConvertToTraceType(Buoyancy.TraceChannel), false, TArray<AActor*>(),
-            	// 	bDisplayDebug ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None,
-            	// 	Hits, false))
-            	// {
-            	// 	continue;
-            	// }
- 
-                // Remove all hits which didn't hit us 
-                for (int32 i = Hits.Num()-1; i >= 0; --i)
-                {
-                    if (Hits[i].GetActor() != *Actor)
-                    {
-                        Hits.RemoveAt(i);
-                    }
-                }
-                
-                if (bDisplayDebug)
-                {
-	                for (const FHitResult& Hit : Hits)
-	                {
-		                UKismetSystemLibrary::DrawDebugPoint(*Actor, Hit.ImpactPoint, 10.0f, FLinearColor::Red, .0f);
-	                }
-                }
-            	
-                // We should have a even number of hits. An odd number would mean we hit a plane and not an enclosed mesh
-                if (Hits.Num() % 2 != 0)
-                {
-                    // UKismetSystemLibrary::PrintString(*Actor, FString::Printf(TEXT("Buoyancy System: We have an uneven number of "
-                    //                                                                "trace hits for %s"), *Actor->GetName()),
-                    //                                   true, false, FLinearColor::Yellow, .0f);
-                    continue;
-                }
-
-
-                // Check which points are below the water surface
-                float WaterHeight = Buoyancy.GetWaterHeight(Start, .0f, true);
-
-                // Iterate over pairs of hits: Each pair is the mesh thickness at this location
-                for (int32 i = 0; i+1 < Hits.Num(); i += 2)
-                {
-                    const FVector_NetQuantize& LowerPoint = Hits[i].ImpactPoint;
-                    if (LowerPoint.Z > WaterHeight)
-                    {
-                        continue; // The entire stack is above the waterline
-                    }
-
-                    // If the upper point is above the waterline, clamp it to the water height
-                    FVector UpperPoint = Hits[i+1].ImpactPoint;
-                    UpperPoint.Z = FMath::Min(UpperPoint.Z, WaterHeight);
-                    float StackHeight = FVector::Dist(LowerPoint, UpperPoint);
-                    float StackVolume = Buoyancy.GridSpacing.X * Buoyancy.GridSpacing.Y * StackHeight;
-
-                    // Buoyancy formula:
-                    // Fb = Vs × D × g | Fb: Buoyancy force; Vs: Submerged volume; D = Fluid density; g: Gravity
-                    FVector BuoyancyForce = StackVolume * CVarWaterDensity->GetFloat() * 9.81f * FVector::UpVector;
-                    SimulatingComponent->AddForceAtLocation(BuoyancyForce, LowerPoint);
-                }
+                return;
             }
-        }
+
+            FVector VoxelLocation = VoxelComp.GetWorldLocation(Position, Actor->GetActorTransform());
+            VoxelLocation += BoundsOrigin - Actor->GetActorLocation();
+            // UKismetSystemLibrary::DrawDebugBox(*Actor, VoxelLocation, FVector::OneVector * VoxelSize * .5f, FLinearColor::Red,
+      //           Actor->GetActorRotation());
+      //
+            float Volume = FMath::Pow(VoxelSize, 3.0f) * Value;
+            TotalVolume += Volume;
+
+            float WaterHeight = Buoyancy.GetWaterHeight(VoxelLocation, .0f, true);
+            if (VoxelLocation.Z > WaterHeight)
+            {
+                AddedLocations += VoxelLocation * Volume;
+                return;
+            }
+    		
+            // Buoyancy formula:
+            // Fb = Vs × D × g | Fb: Buoyancy force; Vs: Submerged volume; D = Fluid density; g: Gravity
+            //	  <=> m^3 * kg/m^3 * m/s^2
+            //	  <=> cm^3 * g/cm^3 * cm/s^2
+
+            // Units: cm^3 * g/cm^3 * m/s^2 * 100 cm
+            float BuoyancyForce = Volume * CVarWaterDensity->GetFloat() * (9.81f * 100.0f);
+            BuoyancyForce /= 1000.0f; // g -> kg
+            //SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector, VoxelLocation);
+
+            TotalBuoyancy += BuoyancyForce;
+            AddedLocations += VoxelLocation * Volume;
+
+            // float BuoyancyForce = CalculateBuoyancyForce(Volume, SimulatingComponent->GetPhysicsLinearVelocity(), Buoyancy);
+            // BuoyancyForce = FMath::Clamp(BuoyancyForce, .0f, Buoyancy.MaxBuoyantForce);
+            // SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector, VoxelLocation);
+        });
+
+    	// Calculate the center of volume and apply the buoyancy force there
+    	FVector CoV = (1.0f / TotalVolume) * AddedLocations;
+
+    	// Clamp force
+    	float GravityForce = 0.5f * SimulatingComponent->GetMass() * FMath::Square(9.81f);
+    	GravityForce /= DeltaSeconds;
+    	float ClampedBuoyancy = FMath::Clamp(TotalBuoyancy, .0f, 2 * GravityForce);
+    	SimulatingComponent->AddForceAtLocation(ClampedBuoyancy * FVector::UpVector, CoV);
+
+    	UKismetSystemLibrary::DrawDebugSphere(*Actor, CoV);
+    	UKismetSystemLibrary::DrawDebugArrow(*Actor, Actor->GetActorLocation(), CoV, 2.0f, FLinearColor::Red, .0f, 2.0f);
+
+  //   	if (Actor->GetActorLocation().Z < Buoyancy.GetWaterHeight(Actor->GetActorLocation(), .0f, true))
+		// {
+		// 	FVector Drag = CalculateLinearDragForce(SimulatingComponent->GetPhysicsLinearVelocity(), Buoyancy);
+		// 	SimulatingComponent->AddForce(Drag, NAME_None, true);
+	 //
+		// 	FVector Torque = CalculateAngularDragTorque(SimulatingComponent->GetPhysicsAngularVelocityInDegrees(), Buoyancy);
+		// 	SimulatingComponent->AddAngularImpulseInDegrees(Torque, NAME_None, true);
+		// }
+
+        float VolumeInCubicMeter = (TotalVolume / FMath::Pow(100.0f, 3.0f));
+    	UKismetSystemLibrary::PrintString(*Actor, FString::Printf(TEXT("Buoyancy force: %.0f (kg*cm/s^2); Volume (m^3): %.1f"),
+    															  TotalBuoyancy, VolumeInCubicMeter),
+										  true, false, FLinearColor::Green, .0f);
+    	
+    	// Buoyancy formula:
+    	// Fb = Vs × D × g | Fb: Buoyancy force; Vs: Submerged volume; D = Fluid density; g: Gravity
+    	//	  = m^3 * g/cm^3 * m/s^2
+    	// float BuoyancyForce = TotalSubmergedVolume * CVarWaterDensity->GetFloat() * (9.81f / 100.0f);
+    	// BuoyancyForce = FMath::Clamp(BuoyancyForce, .0f, Buoyancy.MaxBuoyantForce);    	
+    	// SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector, BoundsOrigin);
+
+    	// UKismetSystemLibrary::PrintString(*Actor, FString::Printf(TEXT("Total submerged volume (cm^3): %.0f"), TotalSubmergedVolume),
+    	// 	true, false, FLinearColor::Green, .0f);
+    	
 
         // Step 2: Handle drag
-        if (Buoyancy.bApplyDragForcesInWater)
-        {
-            // Linear drag force
-            FVector DragForce = FVector::ZeroVector;            
-            FVector PlaneVelocity = SimulatingComponent->GetComponentVelocity();
-            PlaneVelocity.Z = 0;
-            const FVector VelocityDir = PlaneVelocity.GetSafeNormal();
-            const float SpeedKmh = ToKmh(PlaneVelocity.Size());
-            const float ClampedSpeed = FMath::Clamp(SpeedKmh, -Buoyancy.MaxDragSpeed, Buoyancy.MaxDragSpeed);
+        // if (Buoyancy.bApplyDragForcesInWater)
+        // {
+        //     // Linear drag force
+        //     FVector DragForce = FVector::ZeroVector;            
+        //     FVector PlaneVelocity = SimulatingComponent->GetComponentVelocity();
+        //     PlaneVelocity.Z = 0;
+        //     const FVector VelocityDir = PlaneVelocity.GetSafeNormal();
+        //     const float SpeedKmh = ToKmh(PlaneVelocity.Size());
+        //     const float ClampedSpeed = FMath::Clamp(SpeedKmh, -Buoyancy.MaxDragSpeed, Buoyancy.MaxDragSpeed);
+        //
+        //     const float Resistance = ClampedSpeed * Buoyancy.DragCoefficient;
+        //     DragForce += -Resistance * VelocityDir;
+        //
+        //     const float Resistance2 = ClampedSpeed * ClampedSpeed * Buoyancy.DragCoefficient2;
+        //     DragForce += -Resistance2 * VelocityDir * FMath::Sign(SpeedKmh);
+        //
+        //     // Angular drag torque
+        //     FVector DragTorque = -SimulatingComponent->GetPhysicsAngularVelocityInDegrees() * Buoyancy.AngularDragCoefficient;
+        //
+        //     // Apply drag forces
+        //     SimulatingComponent->AddForce(DragForce, NAME_None, /*bAccelChange=*/true);
+        //     SimulatingComponent->AddTorqueInDegrees(DragTorque, NAME_None, /*bAccelChange=*/true);
+        // }
 
-            const float Resistance = ClampedSpeed * Buoyancy.DragCoefficient;
-            DragForce += -Resistance * VelocityDir;
+        if (TotalBuoyancy != .0f)
+        {        	
+    		// Drag equation:
+    		// Fd = 0.5 * p * u^2 * Cd * A 
+			// Fd: Drag force
+			// p: Mass density of the fluid
+			// u: Relative flow velocity;
+    		// Cd: Drag coefficient
+    		// A: Reference Area
+	        FVector Velocity = SimulatingComponent->GetComponentVelocity();
+    		float Speed = Velocity.Size();
+        	Speed /= 100.0f; // cm -> m
+    		float Area = BoundsExtent.X * BoundsExtent.Y;
+        	Area /= FMath::Square(100.0f); // cm^2 -> m^2        	
+    		float DragForce = 0.5f * CVarWaterDensity->GetFloat() * 1000.0f * FMath::Square(Speed) * Area;
 
-            const float Resistance2 = ClampedSpeed * ClampedSpeed * Buoyancy.DragCoefficient2;
-            DragForce += -Resistance2 * VelocityDir * FMath::Sign(SpeedKmh);
+        	// Clamp force
+        	DragForce = FMath::Clamp(DragForce, .0f, Speed / DeltaSeconds);
+        	
+        	// kg * m / s^2 -> kg * cm / s^2
+        	DragForce *= 100.0f;
+   
+    		SimulatingComponent->AddForce(-DragForce * Velocity.GetSafeNormal(), NAME_None, false);
+   
+        	FVector AngularVelocity = SimulatingComponent->GetPhysicsAngularVelocityInDegrees();
+        	float AngularSpeed = AngularVelocity.Size();
+        	AngularSpeed /= 100.0f; // cm -> m
+        	float HorizontalArea = BoundsExtent.Z * BoundsExtent.Y;;
+        	HorizontalArea /= FMath::Square(100.0f); // cm^2 -> m^2 
+        	float DragTorque = 0.5f * CVarWaterDensity->GetFloat() * 1000.0f * FMath::Square(AngularSpeed) * HorizontalArea;
 
-            // Angular drag torque
-            FVector DragTorque = -SimulatingComponent->GetPhysicsAngularVelocityInDegrees() * Buoyancy.AngularDragCoefficient;
-
-            // Apply drag forces
-            SimulatingComponent->AddForce(DragForce, NAME_None, /*bAccelChange=*/true);
-            SimulatingComponent->AddTorqueInDegrees(DragTorque, NAME_None, /*bAccelChange=*/true);
+        	// kg * m / s^2 -> kg * cm / s^2
+        	DragTorque *= 100.0f;
+   
+        	SimulatingComponent->AddTorqueInDegrees(-DragTorque * AngularVelocity.GetSafeNormal(), NAME_None, false);
         }
     }
+}
+
+//////////////////////////////////////////////////
+float SandboxGameCoreSystems::CalculateBuoyancyForce(float Volume, const FVector& Velocity, const FSGBuoyancyComponent& BuoyancyComp)
+{
+	float ForwardSpeed = ToKmh(FVector2D(Velocity).Size());
+	float VerticalSpeed = ToKmh(Velocity.Z);
+	
+	const float MinVelocity = BuoyancyComp.BuoyancyRampMinVelocity;
+	const float MaxVelocity = BuoyancyComp.BuoyancyRampMaxVelocity;
+	const float RampFactor = FMath::Clamp((ForwardSpeed - MinVelocity) / (MaxVelocity - MinVelocity), 0.f, 1.f);
+	const float BuoyancyRamp = RampFactor * (BuoyancyComp.BuoyancyRampMax - 1);
+	float BuoyancyCoefficientWithRamp = BuoyancyComp.BuoyancyCoefficient * (1 + BuoyancyRamp);
+	
+	const float FirstOrderDrag = BuoyancyComp.BuoyancyDamp * VerticalSpeed;
+	const float SecondOrderDrag = FMath::Sign(VerticalSpeed) * BuoyancyComp.BuoyancyDamp2 * FMath::Square(VerticalSpeed);
+	const float DampingFactor = -FMath::Max(FirstOrderDrag + SecondOrderDrag, 0.f);
+
+	return Volume * BuoyancyCoefficientWithRamp + DampingFactor;
+}
+
+FVector SandboxGameCoreSystems::CalculateLinearDragForce(const FVector& Velocity, const FSGBuoyancyComponent& BuoyancyComp)
+{
+	FVector DragForce = FVector::ZeroVector;
+	FVector PlaneVelocity = Velocity;
+	PlaneVelocity.Z = 0;
+	const FVector VelocityDir = PlaneVelocity.GetSafeNormal();
+	const float SpeedKmh = ToKmh(PlaneVelocity.Size());
+	const float ClampedSpeed = FMath::Clamp(SpeedKmh, -BuoyancyComp.MaxDragSpeed, BuoyancyComp.MaxDragSpeed);
+
+	const float Resistance = ClampedSpeed * BuoyancyComp.DragCoefficient;
+	DragForce += -Resistance * VelocityDir;
+
+	const float Resistance2 = ClampedSpeed * ClampedSpeed * BuoyancyComp.DragCoefficient2;
+	DragForce += -Resistance2 * VelocityDir * FMath::Sign(SpeedKmh);
+
+	return DragForce;
+}
+
+FVector SandboxGameCoreSystems::CalculateAngularDragTorque(const FVector& AngularVelocity, const FSGBuoyancyComponent& BuoyancyComp)
+{
+	return -AngularVelocity * BuoyancyComp.AngularDragCoefficient;
 }
 
 //////////////////////////////////////////////////
 float SandboxGameCoreSystems::ToKmh(float SpeedCms)
 {
     return SpeedCms * 0.036f; //cm/s to km/h
-}
-
-//////////////////////////////////////////////////
-bool SandboxGameCoreSystems::ActorMultiHitLineTrace(AActor* Actor, TArray<FHitResult>& OutHits, FVector Start, FVector End,
-													ECollisionChannel Channel)
-{
-	OutHits.Empty();
-	
-	const FVector Direction = (End - Start).GetSafeNormal();
-	FHitResult FirstHit, SecondHit, LastHit;
-	do
-	{
-		FirstHit = {};
-		SecondHit = {};
-		
-		FCollisionQueryParams Params;
-		Params.bFindInitialOverlaps = true;
-		Params.bIgnoreTouches = true;
-		Params.bTraceComplex = true;
-
-		// Do two line trace in the opposite directions
-		bool bFirstTraceHit = Actor->ActorLineTraceSingle(FirstHit, Start, End, Channel, Params);
-		bool bSecondTraceHit = Actor->ActorLineTraceSingle(SecondHit, End, Start, Channel, Params);
-		if (!bFirstTraceHit || !bSecondTraceHit)
-		{
-			break;
-		}
-
-		// If their impact points are close to each other, break, because we hit a plane
-		if (FMath::IsNearlyEqual(FirstHit.ImpactPoint.Z, SecondHit.ImpactPoint.Z, 1.0f))
-		{
-			break;
-		}
-		
-		OutHits.Add(FirstHit);
-		OutHits.Add(SecondHit);		
-	}
-	while (false);
-
-	// Sort hit results in ascending order by the impact point's vertical location
-	OutHits.Sort([](const FHitResult& First, const FHitResult& Second){ return First.ImpactPoint.Z < Second.ImpactPoint.Z; });
-
-	return OutHits.Num() > 0;
-}
-
-float SandboxGameCoreSystems::VoxelizeActor(AActor* Actor, float VoxelSize, float WaterLevel, ECollisionChannel Channel)
-{
-	FVector BoundsOrigin, BoundsExtent;
-	Actor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
-
-	int32 TotalHits = 0;
-	int32 HitsBelowWater = 0;
-	for (int32 x = -BoundsExtent.X; x < BoundsExtent.X; x += VoxelSize)
-	{
-		for (int32 y = -BoundsExtent.Y; y < BoundsExtent.Y; y += VoxelSize)
-		{
-			for (int32 z = -BoundsExtent.Z; z < BoundsExtent.Z; z += VoxelSize)
-			{
-				UWorld* World = Actor->GetWorld();
-				
-				FVector BoxSize = FVector::OneVector * VoxelSize * .5f;
-				FVector HalfBox = BoxSize;
-				HalfBox.Z /= 2.0f;
-
-				FVector VoxelLocation = FVector(x, y, z) + BoundsOrigin;
-				FVector Start = VoxelLocation - FVector::UpVector * VoxelSize * .25f;
-				FVector End = VoxelLocation + FVector::UpVector * VoxelSize * .25f;
-				
-				FCollisionQueryParams Params;
-				Params.bFindInitialOverlaps = true;
-				Params.bIgnoreTouches = false;
-				Params.bTraceComplex = true;
-				
-				FHitResult Hit;
-				if (World->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, Channel, FCollisionShape::MakeBox(BoxSize), Params))					
-				{
-					AActor* HitActor = Hit.GetActor();
-					if (HitActor != Actor)
-					{
-						continue;
-					}
-					
-					TotalHits++;
-					bool bIsBelowWater = VoxelLocation.Z <= WaterLevel;
-					if (bIsBelowWater)
-					{
-						HitsBelowWater++;
-					}
-					
-					UKismetSystemLibrary::DrawDebugBox(Actor, VoxelLocation, BoxSize, bIsBelowWater ? FLinearColor::Green :
-													   FLinearColor::White);
-
-					UKismetSystemLibrary::DrawDebugArrow(World, Start, End, 5.0f, FLinearColor::Red);
-					UKismetSystemLibrary::DrawDebugPoint(World, VoxelLocation, 10.0f, FLinearColor::Red);
-				}
-			}
-		}
-	}
-
-	return HitsBelowWater * FMath::Pow(VoxelSize, 3);
 }

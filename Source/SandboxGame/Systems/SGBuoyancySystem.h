@@ -4,17 +4,15 @@
 
 #include "../Plugins/UnrealEngineECS/Source/UnrealEngineECS/Public/ECSIncludes.h"
 
+struct FSGBuoyancyComponent;
+
 namespace SandboxGameCoreSystems
 {
 	void BuoyancySystem(float DeltaSeconds, entt::registry& Registry);
 
+	float CalculateBuoyancyForce(float Volume, const FVector& Velocity, const FSGBuoyancyComponent& BuoyancyComp);
+	FVector CalculateLinearDragForce(const FVector& Velocity, const FSGBuoyancyComponent& BuoyancyComp);
+	FVector CalculateAngularDragTorque(const FVector& AngularVelocity, const FSGBuoyancyComponent& BuoyancyComp);
+
     float ToKmh(float SpeedCms);
-
-	
-	bool ActorMultiHitLineTrace(AActor* Actor, TArray<FHitResult>& OutHits, FVector Start, FVector End, ECollisionChannel Channel);
-
-	/**
-	 * @return Volume below water level
-	 */
-	float VoxelizeActor(AActor* Actor, float VoxelSize, float WaterLevel, ECollisionChannel Channel);
 }

@@ -72,40 +72,41 @@ float FSGBuoyancyComponent::GetWaterHeight(FVector Position, float DefaultHeight
 
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
-void USGBuoyancyComponentWrapper::BeginPlay()
+void UECSBuoyancyComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	GetOwner()->OnActorBeginOverlap.AddDynamic(this, &USGBuoyancyComponentWrapper::OnOwnerBeginOverlap);
-	GetOwner()->OnActorEndOverlap.AddDynamic(this, &USGBuoyancyComponentWrapper::OnOwnerEndOverlap);
+	GetOwner()->OnActorBeginOverlap.AddDynamic(this, &UECSBuoyancyComponent::OnOwnerBeginOverlap);
+	GetOwner()->OnActorEndOverlap.AddDynamic(this, &UECSBuoyancyComponent::OnOwnerEndOverlap);
+
+	TArray<AActor*> Overlaps;
+	GetOwner()->GetOverlappingActors(Overlaps, AWaterBody::StaticClass());
+	for (AActor* WaterBody : Overlaps)
+	{
+		OnOwnerBeginOverlap(GetOwner(), WaterBody);
+	}
 }
 
-void USGBuoyancyComponentWrapper::RegisterComponentWithECS()
+void UECSBuoyancyComponent::RegisterComponentWithECS()
 {
 	Super::RegisterComponentWithECS();
 	EntityHandle.AddComponent<FSGBuoyancyComponent>(DefaultValues);
 }
 
 //////////////////////////////////////////////////
-void USGBuoyancyComponentWrapper::UpdateECSComponent(const FSGBuoyancyComponent& NewValues)
+void UECSBuoyancyComponent::UpdateECSComponent(const FSGBuoyancyComponent& NewValues)
 {
 	DefaultValues = NewValues;
 	EntityHandle.GetComponent<FSGBuoyancyComponent>() = NewValues;
 }
 
-void USGBuoyancyComponentWrapper::UpdateECSComponent()
+void UECSBuoyancyComponent::UpdateECSComponent()
 {
 	EntityHandle.GetComponent<FSGBuoyancyComponent>() = DefaultValues;
 }
 
 //////////////////////////////////////////////////
-FSGBuoyancyComponent& USGBuoyancyComponentWrapper::GetComponent() const
-{
-	return EntityHandle.GetComponent<FSGBuoyancyComponent>();
-}
-
-//////////////////////////////////////////////////
-void USGBuoyancyComponentWrapper::OnOwnerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor)
+void UECSBuoyancyComponent::OnOwnerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor)
 {
 	if (AWaterBody* WaterBody = Cast<AWaterBody>(OtherActor))
 	{
@@ -114,7 +115,7 @@ void USGBuoyancyComponentWrapper::OnOwnerBeginOverlap(AActor* OverlappedActor, A
 	}
 }
 
-void USGBuoyancyComponentWrapper::OnOwnerEndOverlap(AActor* OverlappedActor, AActor* OtherActor)
+void UECSBuoyancyComponent::OnOwnerEndOverlap(AActor* OverlappedActor, AActor* OtherActor)
 {
 	if (AWaterBody* WaterBody = Cast<AWaterBody>(OtherActor))
 	{
