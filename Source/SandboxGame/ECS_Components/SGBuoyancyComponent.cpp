@@ -37,7 +37,7 @@ float FSGBuoyancyComponent::GetWaterHeight(FVector Position, float DefaultHeight
         if (CurrentWaterBody)
         {
             EWaterBodyQueryFlags QueryFlags =
-                EWaterBodyQueryFlags::ComputeLocation
+                  EWaterBodyQueryFlags::ComputeLocation
                 | EWaterBodyQueryFlags::ComputeNormal
                 | EWaterBodyQueryFlags::ComputeImmersionDepth
                 | EWaterBodyQueryFlags::ComputeVelocity;

@@ -91,6 +91,10 @@ namespace SGVoxel
 	 * @param Entity	Entity to get the TVoxelComponent from. Also needs an FActorPtrComponent or FTransform component
 	 */
 	FIntVector WorldLocationToVoxelArray(FVector Location, FEntity Entity);
+
+	/** Performs a line trace trough voxels and returning all voxels which value is below the threshold value */
+	TArray<float> VoxelLineTrace(struct TVoxelComponent& VoxelComponent, const FVector& TraceStart, const FVector& TraceEnd,
+								 float ValueThreshold = 1.0f);
 	
 
 	//////////////////////////////////////////////////	

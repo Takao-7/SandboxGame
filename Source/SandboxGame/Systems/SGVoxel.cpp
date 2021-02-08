@@ -98,6 +98,98 @@ FIntVector SGVoxel::WorldLocationToVoxelArray(FVector Location, FEntity Entity)
 	return FIntVector();
 }
 
+TArray<float> SGVoxel::VoxelLineTrace(TVoxelComponent& VoxelComponent, const FVector& TraceStart, const FVector& TraceEnd,
+									  float ValueThreshold)
+{
+	int32 x1 = TraceEnd.X, y1 = TraceEnd.Y, z1 = TraceEnd.Z, x0 = TraceStart.X, y0 = TraceStart.Y, z0 = TraceStart.Z;
+
+	int32 dx = abs(x1 - x0);
+	int32 dy = abs(y1 - y0);
+	int32 dz = abs(z1 - z0);
+
+	int32 stepX = x0 < x1 ? 1 : -1;
+	int32 stepY = y0 < y1 ? 1 : -1;
+	int32 stepZ = z0 < z1 ? 1 : -1;
+
+	float hypotenuse = sqrt(pow(dx, 2) + pow(dy, 2) + pow(dz, 2));
+	float tMaxX = hypotenuse * 0.5f / dx;
+	float tMaxY = hypotenuse * 0.5f / dy;
+	float tMaxZ = hypotenuse * 0.5f / dz;
+	float tDeltaX = hypotenuse / dx;
+	float tDeltaY = hypotenuse / dy;
+	float tDeltaZ = hypotenuse / dz;
+
+	while (x0 != x1 || y0 != y1 || z0 != z1)
+	{
+		if (tMaxX < tMaxY)
+		{
+			if (tMaxX < tMaxZ)
+			{
+				x0 = x0 + stepX;
+				tMaxX = tMaxX + tDeltaX;
+			}
+			else if (tMaxX > tMaxZ)
+			{
+				z0 = z0 + stepZ;
+				tMaxZ = tMaxZ + tDeltaZ;
+			}
+			else
+			{
+				x0 = x0 + stepX;
+				tMaxX = tMaxX + tDeltaX;
+				z0 = z0 + stepZ;
+				tMaxZ = tMaxZ + tDeltaZ;
+			}
+		}
+		else if (tMaxX > tMaxY)
+		{
+			if (tMaxY < tMaxZ)
+			{
+				y0 = y0 + stepY;
+				tMaxY = tMaxY + tDeltaY;
+			}
+			else if (tMaxY > tMaxZ)
+			{
+				z0 = z0 + stepZ;
+				tMaxZ = tMaxZ + tDeltaZ;
+			}
+			else
+			{
+				y0 = y0 + stepY;
+				tMaxY = tMaxY + tDeltaY;
+				z0 = z0 + stepZ;
+				tMaxZ = tMaxZ + tDeltaZ;
+			}
+		}
+		else
+		{
+			if (tMaxY < tMaxZ)
+			{
+				y0 = y0 + stepY;
+				tMaxY = tMaxY + tDeltaY;
+				x0 = x0 + stepX;
+				tMaxX = tMaxX + tDeltaX;
+			}
+			else if (tMaxY > tMaxZ)
+			{
+				z0 = z0 + stepZ;
+				tMaxZ = tMaxZ + tDeltaZ;
+			}
+			else
+			{
+				x0 = x0 + stepX;
+				tMaxX = tMaxX + tDeltaX;
+				y0 = y0 + stepY;
+				tMaxY = tMaxY + tDeltaY;
+				z0 = z0 + stepZ;
+				tMaxZ = tMaxZ + tDeltaZ;
+			}
+		}
+	}
+
+	return TArray<float>();
+}
+
 //////////////////////////////////////////////////
 FVector SGVoxel::TVoxelComponent::GetWorldLocation(const FIntVector& Position, const FTransform& Transform) const
 {
