@@ -63,8 +63,10 @@ void SandboxGameCoreSystems::BuoyancySystem(float DeltaSeconds, entt::registry& 
         const float VoxelSize = Buoyancy.VoxelSize;
 
     	float TotalVolume = .0f;
+    	FVector SumWeightedVolumes = FVector::ZeroVector;
+
     	float TotalBuoyancy = .0f;
-    	FVector AddedLocations = FVector::ZeroVector;
+    	FVector SumWeightedBuoyancy = FVector::ZeroVector;
 
         const FTransform& ActorTransform = Actor->GetActorTransform();
 
@@ -87,54 +89,38 @@ void SandboxGameCoreSystems::BuoyancySystem(float DeltaSeconds, entt::registry& 
             float WaterHeight = Buoyancy.GetWaterHeight(VoxelLocation, .0f, true);
             if (VoxelLocation.Z > WaterHeight)
             {
-                AddedLocations += VoxelLocation * Volume;
+                SumWeightedVolumes += VoxelLocation * Volume;
                 return;
             }
     		
             // Buoyancy formula:
             // Fb = Vs × D × g | Fb: Buoyancy force; Vs: Submerged volume; D = Fluid density; g: Gravity
-            //	  <=> m^3 * kg/m^3 * m/s^2
-            //	  <=> cm^3 * g/cm^3 * cm/s^2
-
             // Units: cm^3 * g/cm^3 * m/s^2 * 100 cm
             float BuoyancyForce = Volume * CVarWaterDensity->GetFloat() * (9.81f * 100.0f);
             BuoyancyForce /= 1000.0f; // g -> kg
-            //SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector, VoxelLocation);
+            SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector * DeltaSeconds, VoxelLocation);
 
             TotalBuoyancy += BuoyancyForce;
-            AddedLocations += VoxelLocation * Volume;
-
-            // float BuoyancyForce = CalculateBuoyancyForce(Volume, SimulatingComponent->GetPhysicsLinearVelocity(), Buoyancy);
-            // BuoyancyForce = FMath::Clamp(BuoyancyForce, .0f, Buoyancy.MaxBuoyantForce);
-            //SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector * DeltaSeconds, VoxelLocation);
+            SumWeightedVolumes += VoxelLocation * Volume;
+    		SumWeightedBuoyancy += VoxelLocation * BuoyancyForce;
         });
 
     	// Calculate the center of volume and apply the buoyancy force there
-    	FVector CoV = (1.0f / TotalVolume) * AddedLocations;
-    	SimulatingComponent->AddForceAtLocation(TotalBuoyancy * FVector::UpVector * DeltaSeconds, CoV);
+    	FVector CoV = (1.0f / TotalVolume) * SumWeightedVolumes;
+    	//SimulatingComponent->AddForceAtLocation(TotalBuoyancy * FVector::UpVector * DeltaSeconds, CoV);
+    	//UKismetSystemLibrary::DrawDebugSphere(*Actor, CoV, 100.0f, 24, FLinearColor::Blue, 0, 1);
 
-    	// UKismetSystemLibrary::DrawDebugSphere(*Actor, CoV);
-    	// UKismetSystemLibrary::DrawDebugArrow(*Actor, Actor->GetActorLocation(), CoV, 2.0f, FLinearColor::Red, .0f, 2.0f);
+    	FVector CenterOfBuoyancy = (1.0f / TotalBuoyancy) * SumWeightedBuoyancy;
+    	//SimulatingComponent->AddForceAtLocation(TotalBuoyancy * FVector::UpVector * DeltaSeconds, CenterOfBuoyancy);
+    	//UKismetSystemLibrary::DrawDebugSphere(*Actor, CenterOfBuoyancy, 100.0f, 24, FLinearColor::Red, 0, 2);
 
-  //   	if (Actor->GetActorLocation().Z < Buoyancy.GetWaterHeight(Actor->GetActorLocation(), .0f, true))
-		// {
-		// 	FVector Drag = CalculateLinearDragForce(SimulatingComponent->GetPhysicsLinearVelocity(), Buoyancy);
-		// 	SimulatingComponent->AddForce(Drag, NAME_None, true);
-	 //
-		// 	FVector Torque = CalculateAngularDragTorque(SimulatingComponent->GetPhysicsAngularVelocityInDegrees(), Buoyancy);
-		// 	SimulatingComponent->AddAngularImpulseInDegrees(Torque, NAME_None, true);
-		// }
-
+    	
         float VolumeInCubicMeter = (TotalVolume / FMath::Pow(100.0f, 3.0f));
     	UKismetSystemLibrary::PrintString(*Actor, FString::Printf(TEXT("Buoyancy force: %.0f (kg*cm/s^2); Volume (m^3): %.1f"),
     															  TotalBuoyancy, VolumeInCubicMeter),
 										  true, false, FLinearColor::Green, .0f);
 
-        // if (TotalBuoyancy != .0f)
-        // {
-	       //  UE_LOG(LogTemp, Warning, TEXT("Buoyancy force: %.0f kg*cm/s^2"), TotalBuoyancy);
-        // }
-
+    	// Drag
     	if (TotalBuoyancy != .0f)
     	{        	
     		// Drag equation:
@@ -149,12 +135,12 @@ void SandboxGameCoreSystems::BuoyancySystem(float DeltaSeconds, entt::registry& 
     		float Area = BoundsExtent.X * BoundsExtent.Y;
     		const float DragCoefficient = 1.0f;
 
-    		// Units: g/cm^3 * cm^2/s^2 * cm^2 => g * cm^2 / s^2
+    		// Units: g*cm^2/s^2	 g/cm^3						  * cm^2/s^2			 * 1			   * cm^2
     		float DragForce = 0.5f * CVarWaterDensity->GetFloat() * FMath::Square(Speed) * DragCoefficient * Area;
 
     		// g -> kg
     		DragForce /= 1000.0f;     
-    		SimulatingComponent->AddForce(-DragForce * Velocity.GetSafeNormal() * DeltaSeconds);
+    		SimulatingComponent->AddForce(-DragForce * Velocity.GetSafeNormal() * DeltaSeconds, NAME_None, false);
      
     		FVector AngularVelocity = SimulatingComponent->GetPhysicsAngularVelocityInDegrees();
     		float AngularSpeed = AngularVelocity.Size();
@@ -162,48 +148,9 @@ void SandboxGameCoreSystems::BuoyancySystem(float DeltaSeconds, entt::registry& 
     		float DragTorque = 0.5f * CVarWaterDensity->GetFloat() * FMath::Square(AngularSpeed) * DragCoefficient * HorizontalArea;
 	    
     		// g -> kg
-    		DragTorque /= 1000.0f;     
-    		SimulatingComponent->AddTorqueInDegrees(-DragTorque * AngularVelocity.GetSafeNormal() * DeltaSeconds);
-    	}
-    	
-    	
-    	// Buoyancy formula:
-    	// Fb = Vs × D × g | Fb: Buoyancy force; Vs: Submerged volume; D = Fluid density; g: Gravity
-    	//	  = m^3 * g/cm^3 * m/s^2
-    	// float BuoyancyForce = TotalSubmergedVolume * CVarWaterDensity->GetFloat() * (9.81f / 100.0f);
-    	// BuoyancyForce = FMath::Clamp(BuoyancyForce, .0f, Buoyancy.MaxBuoyantForce);    	
-    	// SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector, BoundsOrigin);
-
-    	// UKismetSystemLibrary::PrintString(*Actor, FString::Printf(TEXT("Total submerged volume (cm^3): %.0f"), TotalSubmergedVolume),
-    	// 	true, false, FLinearColor::Green, .0f);
-    	
-
-        // Step 2: Handle drag
-        // if (Buoyancy.bApplyDragForcesInWater)
-        // {
-        //     // Linear drag force
-        //     FVector DragForce = FVector::ZeroVector;            
-        //     FVector PlaneVelocity = SimulatingComponent->GetComponentVelocity();
-        //     PlaneVelocity.Z = 0;
-        //     const FVector VelocityDir = PlaneVelocity.GetSafeNormal();
-        //     const float SpeedKmh = ToKmh(PlaneVelocity.Size());
-        //     const float ClampedSpeed = FMath::Clamp(SpeedKmh, -Buoyancy.MaxDragSpeed, Buoyancy.MaxDragSpeed);
-        //
-        //     const float Resistance = ClampedSpeed * Buoyancy.DragCoefficient;
-        //     DragForce += -Resistance * VelocityDir;
-        //
-        //     const float Resistance2 = ClampedSpeed * ClampedSpeed * Buoyancy.DragCoefficient2;
-        //     DragForce += -Resistance2 * VelocityDir * FMath::Sign(SpeedKmh);
-        //
-        //     // Angular drag torque
-        //     FVector DragTorque = -SimulatingComponent->GetPhysicsAngularVelocityInDegrees() * Buoyancy.AngularDragCoefficient;
-        //
-        //     // Apply drag forces
-        //     SimulatingComponent->AddForce(DragForce, NAME_None, /*bAccelChange=*/true);
-        //     SimulatingComponent->AddTorqueInDegrees(DragTorque, NAME_None, /*bAccelChange=*/true);
-        // }
-
-        
+    		DragTorque /= 1000.0f;
+    		SimulatingComponent->AddTorqueInDegrees(-DragTorque * AngularVelocity.GetSafeNormal() * DeltaSeconds, NAME_None, false);
+    	}   
     }
 }
 
