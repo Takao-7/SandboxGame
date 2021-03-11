@@ -98,10 +98,14 @@ FIntVector SGVoxel::WorldLocationToVoxelArray(FVector Location, FEntity Entity)
 	return FIntVector();
 }
 
-TArray<float> SGVoxel::VoxelLineTrace(TVoxelComponent& VoxelComponent, const FVector& TraceStart, const FVector& TraceEnd,
-									  float ValueThreshold)
+//////////////////////////////////////////////////
+TArray<FIntVector> SGVoxel::GetVoxelCoordinatesInLine(const FIntVector& TraceStart, const FIntVector& TraceEnd)
 {
-	int32 x1 = TraceEnd.X, y1 = TraceEnd.Y, z1 = TraceEnd.Z, x0 = TraceStart.X, y0 = TraceStart.Y, z0 = TraceStart.Z;
+	// Current coordinates
+	int32 x0 = TraceStart.X, y0 = TraceStart.Y, z0 = TraceStart.Z;
+
+	// End coordinates
+	int32 x1 = TraceEnd.X, y1 = TraceEnd.Y, z1 = TraceEnd.Z;
 
 	int32 dx = abs(x1 - x0);
 	int32 dy = abs(y1 - y0);
@@ -119,6 +123,7 @@ TArray<float> SGVoxel::VoxelLineTrace(TVoxelComponent& VoxelComponent, const FVe
 	float tDeltaY = hypotenuse / dy;
 	float tDeltaZ = hypotenuse / dz;
 
+	TArray<FIntVector> Coordinates;
 	while (x0 != x1 || y0 != y1 || z0 != z1)
 	{
 		if (tMaxX < tMaxY)
@@ -185,13 +190,163 @@ TArray<float> SGVoxel::VoxelLineTrace(TVoxelComponent& VoxelComponent, const FVe
 				tMaxZ = tMaxZ + tDeltaZ;
 			}
 		}
+		Coordinates.Add({ x0, y0, z0 });
 	}
 
-	return TArray<float>();
+	return Coordinates;
+}
+
+//////////////////////////////////////////////////
+TArray<float> SGVoxel::GetVoxels(const TArray<FIntVector>& Coordinates, const TVoxelComponent& VoxelComponent)
+{
+	TArray<float> Values;
+	for (auto& Coordinate : Coordinates)
+	{
+		VoxelComponent[Coordinate];
+	}
+
+	return Values;
+}
+
+//////////////////////////////////////////////////
+FIntVector SGVoxel::VoxelLineTrace(float Threshold)
+{
+	// Step one: Initialization
+	// Find the voxel in which the ray originates
+
+
+	
+	// Step two: Incremental traversal
+
+	// Ray equation: U + tV for t >= 0
+
+	// Incremental phase of the traversal algorithm
+	int32 X = 0, Y = 0, Z = 0;
+
+	// Step size. Initialized with 1 or -1, which is determined by the sign of the x and y components of V
+	int32 stepX = 1;
+	int32 stepY = 1;
+	int32 stepZ = 1;
+
+	float tMaxX = .0f, tMaxY = .0f, tMaxZ = .0f;
+	float tDeltaX = .0f, tDeltaY = .0f, tDeltaZ = .0f;
+
+	float justOutX = .0f, justOutY = .0f, justOutZ = .0f; 
+	
+	TOptional<FIntVector> ImpactPoint;
+	do
+	{
+		if (tMaxX < tMaxY)
+		{
+			if (tMaxX < tMaxZ)
+			{
+				X += stepX;
+
+				if (X == justOutX)
+				{
+					return {}; // Outside grid
+				}
+				
+				tMaxX += tDeltaX;
+			}
+			else
+			{
+				Z += stepZ;				
+				if (Z == justOutZ)
+				{
+					return {};
+				}
+				
+				tMaxZ += tDeltaZ;
+			}
+		}
+		else
+		{
+			if (tMaxY < tMaxZ)
+			{
+				Y += stepY;
+				if (Y == justOutY)
+				{
+					return {};
+				}
+				
+				tMaxY += tDeltaY;
+			}
+			else
+			{
+				Z += stepZ;
+				if(Z == justOutZ)
+				{
+					return {};
+				}
+				
+				tMaxZ += tDeltaZ;
+			}
+		}
+		//list = ObjectList[X][Y][Z];
+	}
+	while(!ImpactPoint.IsSet());
+
+	return ImpactPoint.Get(FIntVector::ZeroValue);
 }
 
 //////////////////////////////////////////////////
 FVector SGVoxel::TVoxelComponent::GetWorldLocation(const FIntVector& Position, const FTransform& Transform) const
 {
 	return Transform.TransformPosition(FVector(Position * GetVoxelSize()));
+}
+
+void SGVoxel::TVoxelComponent::SetupGroups(float TargetGroupSize, bool bShowDebug, UObject* WorldContext)
+{
+	if (VoxelGroups.Num() > 0 && FMath::IsNearlyEqual(VoxelGroups[0].Size, TargetGroupSize, .1f))
+	{
+		if (WorldContext != nullptr && bShowDebug)
+		{
+			for (int32 i = 0; i < VoxelGroups.Num(); ++i)
+			{
+				FVector Center;
+				FVector Extent;
+				FRotator Rotation;
+				UKismetSystemLibrary::DrawDebugBox(WorldContext, Center, Extent, FLinearColor::Red, Rotation);
+			}
+		}
+		return;
+	}
+
+	VoxelGroups.Empty();
+
+	// This voxel component's total width, in cm
+	FVector Width = FVector(GetExtend()) * VoxelSize;
+
+	// VoxelSize == 10; Extend.X = 100
+	// ==> Width = 1000 cm
+	
+	// How many groups we need per axis
+	FVector GroupsPerAxis =
+	{
+		FMath::CeilToFloat(Width.X / TargetGroupSize),
+		FMath::CeilToFloat(Width.Y / TargetGroupSize),
+		FMath::CeilToFloat(Width.Z / TargetGroupSize)
+	};
+
+	// TargetGroupSize = 100 cm
+	// ==> GroupsPerAxis = 1000 / 100 = 10
+
+	/* How many of OUR voxels are represented by a single group */
+	FVector VoxelsPerGroup = Width / (GroupsPerAxis * VoxelSize);
+
+	// 1000 cm / (10 * 10) = 10	
+
+	for (int32 x = 0; x < GroupsPerAxis.X; ++x)
+	{
+		for (int32 y = 0; y < GroupsPerAxis.Z; ++y)
+		{
+			for (int32 z = 0; z < GroupsPerAxis.Z; ++z)
+			{
+				FIntVector Start = FIntVector(FVector(x, y, z) * VoxelsPerGroup);
+				FIntVector End = Start + FIntVector(FVector::OneVector * VoxelsPerGroup);
+				VoxelGroups.Add(FVoxelGroup(*this, Start, End));
+			}
+		}
+	}
 }

@@ -17,7 +17,7 @@
 DECLARE_CYCLE_STAT(TEXT("Buoycancy System"), STAT_BuoyancySystem, STATGROUP_SGCoreSystems);
 
 //////////////////////////////////////////////////
-TAutoConsoleVariable<bool> CVar_DebugBuoyancySystem
+TAutoConsoleVariable CVar_DebugBuoyancySystem
 (
     TEXT("SG.debug.BuoyancySystem"),
     true,
@@ -26,7 +26,7 @@ TAutoConsoleVariable<bool> CVar_DebugBuoyancySystem
 );
 
 /* Water density in g/cm^3 */
-TAutoConsoleVariable<float> CVarWaterDensity
+TAutoConsoleVariable CVarWaterDensity
 (
     TEXT("SG.WaterDensity"),
     1.0f,
@@ -71,86 +71,88 @@ void SandboxGameCoreSystems::BuoyancySystem(float DeltaSeconds, entt::registry& 
         const FTransform& ActorTransform = Actor->GetActorTransform();
 
     	auto& VoxelComp = Registry.get_or_emplace<SGVoxel::TVoxelComponent>(Entity, *Actor, VoxelSize);
-    	VoxelComp.ForEach([&](FIntVector Position, float Value)
-        {    		
-            if (Value == .0f)
-            {
-                return;
-            }
+    	VoxelComp.SetupGroups(100.0f);
 
-            FVector VoxelLocation = VoxelComp.GetWorldLocation(Position, ActorTransform);
-            VoxelLocation += BoundsOrigin - ActorTransform.GetLocation();
-            // UKismetSystemLibrary::DrawDebugBox(*Actor, VoxelLocation, FVector::OneVector * VoxelSize * .5f, FLinearColor::Red,
-      //           Actor->GetActorRotation());
-      //
-            float Volume = FMath::Pow(VoxelSize, 3.0f) * Value;
-            TotalVolume += Volume;
-
-            float WaterHeight = Buoyancy.GetWaterHeight(VoxelLocation, .0f, true);
-            if (VoxelLocation.Z > WaterHeight)
-            {
-                SumWeightedVolumes += VoxelLocation * Volume;
-                return;
-            }
-    		
-            // Buoyancy formula:
-            // Fb = Vs × D × g | Fb: Buoyancy force; Vs: Submerged volume; D = Fluid density; g: Gravity
-            // Units: cm^3 * g/cm^3 * m/s^2 * 100 cm
-            float BuoyancyForce = Volume * CVarWaterDensity->GetFloat() * (9.81f * 100.0f);
-            BuoyancyForce /= 1000.0f; // g -> kg
-            SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector * DeltaSeconds, VoxelLocation);
-
-            TotalBuoyancy += BuoyancyForce;
-            SumWeightedVolumes += VoxelLocation * Volume;
-    		SumWeightedBuoyancy += VoxelLocation * BuoyancyForce;
-        });
-
-    	// Calculate the center of volume and apply the buoyancy force there
-    	FVector CoV = (1.0f / TotalVolume) * SumWeightedVolumes;
-    	//SimulatingComponent->AddForceAtLocation(TotalBuoyancy * FVector::UpVector * DeltaSeconds, CoV);
-    	//UKismetSystemLibrary::DrawDebugSphere(*Actor, CoV, 100.0f, 24, FLinearColor::Blue, 0, 1);
-
-    	FVector CenterOfBuoyancy = (1.0f / TotalBuoyancy) * SumWeightedBuoyancy;
-    	//SimulatingComponent->AddForceAtLocation(TotalBuoyancy * FVector::UpVector * DeltaSeconds, CenterOfBuoyancy);
-    	//UKismetSystemLibrary::DrawDebugSphere(*Actor, CenterOfBuoyancy, 100.0f, 24, FLinearColor::Red, 0, 2);
-
-    	
-        float VolumeInCubicMeter = (TotalVolume / FMath::Pow(100.0f, 3.0f));
-    	UKismetSystemLibrary::PrintString(*Actor, FString::Printf(TEXT("Buoyancy force: %.0f (kg*cm/s^2); Volume (m^3): %.1f"),
-    															  TotalBuoyancy, VolumeInCubicMeter),
-										  true, false, FLinearColor::Green, .0f);
-
-    	// Drag
-    	if (TotalBuoyancy != .0f)
-    	{        	
-    		// Drag equation:
-    		// Fd = 0.5 * p * u^2 * Cd * A 
-    		// Fd: Drag force
-    		// p: Mass density of the fluid
-    		// u: Relative flow velocity;
-    		// Cd: Drag coefficient
-    		// A: Reference Area
-    		FVector Velocity = SimulatingComponent->GetComponentVelocity();
-    		float Speed = Velocity.Size();
-    		float Area = BoundsExtent.X * BoundsExtent.Y;
-    		const float DragCoefficient = 1.0f;
-
-    		// Units: g*cm^2/s^2	 g/cm^3						  * cm^2/s^2			 * 1			   * cm^2
-    		float DragForce = 0.5f * CVarWaterDensity->GetFloat() * FMath::Square(Speed) * DragCoefficient * Area;
-
-    		// g -> kg
-    		DragForce /= 1000.0f;     
-    		SimulatingComponent->AddForce(-DragForce * Velocity.GetSafeNormal() * DeltaSeconds, NAME_None, false);
-     
-    		FVector AngularVelocity = SimulatingComponent->GetPhysicsAngularVelocityInDegrees();
-    		float AngularSpeed = AngularVelocity.Size();
-    		float HorizontalArea = BoundsExtent.Z * BoundsExtent.Y; 
-    		float DragTorque = 0.5f * CVarWaterDensity->GetFloat() * FMath::Square(AngularSpeed) * DragCoefficient * HorizontalArea;
-	    
-    		// g -> kg
-    		DragTorque /= 1000.0f;
-    		SimulatingComponent->AddTorqueInDegrees(-DragTorque * AngularVelocity.GetSafeNormal() * DeltaSeconds, NAME_None, false);
-    	}   
+    	// VoxelComp.ForEach([&](FIntVector Position, float Value)
+     //    {    		
+     //        if (Value == .0f)
+     //        {
+     //            return;
+     //        }
+     //
+     //        FVector VoxelLocation = VoxelComp.GetWorldLocation(Position, ActorTransform);
+     //        VoxelLocation += BoundsOrigin - ActorTransform.GetLocation();
+     //        // UKismetSystemLibrary::DrawDebugBox(*Actor, VoxelLocation, FVector::OneVector * VoxelSize * .5f, FLinearColor::Red,
+     //  //           Actor->GetActorRotation());
+     //  //
+     //        float Volume = FMath::Pow(VoxelSize, 3.0f) * Value;
+     //        TotalVolume += Volume;
+     //
+     //        float WaterHeight = Buoyancy.GetWaterHeight(VoxelLocation, .0f, true);
+     //        if (VoxelLocation.Z > WaterHeight)
+     //        {
+     //            SumWeightedVolumes += VoxelLocation * Volume;
+     //            return;
+     //        }
+    	// 	
+     //        // Buoyancy formula:
+     //        // Fb = Vs × D × g | Fb: Buoyancy force; Vs: Submerged volume; D = Fluid density; g: Gravity
+     //        // Units: cm^3 * g/cm^3 * m/s^2 * 100 cm
+     //        float BuoyancyForce = Volume * CVarWaterDensity->GetFloat() * (9.81f * 100.0f);
+     //        BuoyancyForce /= 1000.0f; // g -> kg
+     //        SimulatingComponent->AddForceAtLocation(BuoyancyForce * FVector::UpVector * DeltaSeconds, VoxelLocation);
+     //
+     //        TotalBuoyancy += BuoyancyForce;
+     //        SumWeightedVolumes += VoxelLocation * Volume;
+    	// 	SumWeightedBuoyancy += VoxelLocation * BuoyancyForce;
+     //    });
+     //
+    	// // Calculate the center of volume and apply the buoyancy force there
+    	// FVector CoV = (1.0f / TotalVolume) * SumWeightedVolumes;
+    	// //SimulatingComponent->AddForceAtLocation(TotalBuoyancy * FVector::UpVector * DeltaSeconds, CoV);
+    	// //UKismetSystemLibrary::DrawDebugSphere(*Actor, CoV, 100.0f, 24, FLinearColor::Blue, 0, 1);
+     //
+    	// FVector CenterOfBuoyancy = (1.0f / TotalBuoyancy) * SumWeightedBuoyancy;
+    	// //SimulatingComponent->AddForceAtLocation(TotalBuoyancy * FVector::UpVector * DeltaSeconds, CenterOfBuoyancy);
+    	// //UKismetSystemLibrary::DrawDebugSphere(*Actor, CenterOfBuoyancy, 100.0f, 24, FLinearColor::Red, 0, 2);
+     //
+    	//
+     //    float VolumeInCubicMeter = (TotalVolume / FMath::Pow(100.0f, 3.0f));
+    	// UKismetSystemLibrary::PrintString(*Actor, FString::Printf(TEXT("Buoyancy force: %.0f (kg*cm/s^2); Volume (m^3): %.1f"),
+    	// 														  TotalBuoyancy, VolumeInCubicMeter),
+					// 					  true, false, FLinearColor::Green, .0f);
+     //
+    	// // Drag
+    	// if (TotalBuoyancy != .0f)
+    	// {        	
+    	// 	// Drag equation:
+    	// 	// Fd = 0.5 * p * u^2 * Cd * A 
+    	// 	// Fd: Drag force
+    	// 	// p: Mass density of the fluid
+    	// 	// u: Relative flow velocity;
+    	// 	// Cd: Drag coefficient
+    	// 	// A: Reference Area
+    	// 	FVector Velocity = SimulatingComponent->GetComponentVelocity();
+    	// 	float Speed = Velocity.Size();
+    	// 	float Area = BoundsExtent.X * BoundsExtent.Y;
+    	// 	const float DragCoefficient = 1.0f;
+     //
+    	// 	// Units: g*cm^2/s^2	 g/cm^3						  * cm^2/s^2			 * 1			   * cm^2
+    	// 	float DragForce = 0.5f * CVarWaterDensity->GetFloat() * FMath::Square(Speed) * DragCoefficient * Area;
+     //
+    	// 	// g -> kg
+    	// 	DragForce /= 1000.0f;     
+    	// 	SimulatingComponent->AddForce(-DragForce * Velocity.GetSafeNormal() * DeltaSeconds, NAME_None, false);
+     //
+    	// 	FVector AngularVelocity = SimulatingComponent->GetPhysicsAngularVelocityInDegrees();
+    	// 	float AngularSpeed = AngularVelocity.Size();
+    	// 	float HorizontalArea = BoundsExtent.Z * BoundsExtent.Y; 
+    	// 	float DragTorque = 0.5f * CVarWaterDensity->GetFloat() * FMath::Square(AngularSpeed) * DragCoefficient * HorizontalArea;
+	    //
+    	// 	// g -> kg
+    	// 	DragTorque /= 1000.0f;
+    	// 	SimulatingComponent->AddTorqueInDegrees(-DragTorque * AngularVelocity.GetSafeNormal() * DeltaSeconds, NAME_None, false);
+    	// }   
     }
 }
 
