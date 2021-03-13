@@ -17,7 +17,8 @@ public class SandboxGame : ModuleRules
 			"InputCore", 
 			"HeadMountedDisplay",
 			"UnrealEngineECS",
-			"Water"
+			"Water",
+			"Voxel"
 		});
 	}
 }

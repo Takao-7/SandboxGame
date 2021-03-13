@@ -1,94 +1,30 @@
 ﻿
 #include "SGVoxel.h"
+
+#include "VoxelSharedPtr.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "VoxelImporters/VoxelMeshImporter.h"
 
-SGVoxel::TVoxelArray<float> SGVoxel::VoxelizeActor(const AActor* Actor, float VoxelSize)
+//////////////////////////////////////////////////
+TVoxelSharedRef<FVoxelDataAssetData> SGVoxel::VoxelizeMesh(UStaticMeshComponent* MeshComponent, float VoxelSize,
+														   FIntVector& OutPositionOffset)
 {
-	FVector BoundsOrigin, BoundsExtent;
-	Actor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+	FVoxelMeshImporterInputData MeshData;
+	UVoxelMeshImporterLibrary::CreateMeshDataFromStaticMesh(MeshComponent->GetStaticMesh(), MeshData);
+	
+	FTransform Transform = MeshComponent->GetComponentTransform();
+	Transform.SetTranslation(FVector::ZeroVector);
+	FVoxelMeshImporterSettings Settings;
+	Settings.VoxelSize = VoxelSize;
 
-	FIntVector VoxelBounds = FIntVector((BoundsExtent / VoxelSize));
-	VoxelBounds += FIntVector(1);
-	UKismetSystemLibrary::DrawDebugBox(Actor, BoundsOrigin, BoundsExtent, FLinearColor::Yellow, Actor->GetActorRotation());
-
-	// Initialize the output array
-	TVoxelArray<float> VoxelArray (VoxelBounds * 2);
-	float TotalVolume = .0f;
-
-	for (int32 x = -VoxelBounds.X; x < VoxelBounds.X; ++x)
-	{
-		for (int32 y = -VoxelBounds.Y; y < VoxelBounds.Y; ++y)
-		{
-			for (int32 z = -VoxelBounds.Z; z < VoxelBounds.Z; ++z)
-			{
-				FVector BoxSize = FVector::OneVector * VoxelSize * .5f;
-				FVector HalfBox = BoxSize;
-				HalfBox.Z /= 2.0f;
-
-				const FTransform& ActorTransform = Actor->GetActorTransform();
-
-				//FVector VoxelLocation = ActorTransform.TransformPosition(FVector(x, y, z) * VoxelSize);
-				FVector VoxelLocation = ActorTransform.TransformVector(FVector(x, y, z) * VoxelSize) + BoundsOrigin;
-				FVector TraceOffset = ActorTransform.TransformVector(FVector::UpVector * VoxelSize * .25f);
-				FVector Start = VoxelLocation - TraceOffset;
-				FVector End = VoxelLocation + TraceOffset;
-				FRotator Rotation = Actor->GetActorRotation();
-				
-				FCollisionQueryParams Params;
-				Params.bFindInitialOverlaps = true;
-				Params.bIgnoreBlocks = false;
-				Params.bIgnoreTouches = false;
-
-				UWorld* World = Actor->GetWorld();
-				ECollisionChannel CollisionType = Actor->GetRootComponent()->GetCollisionObjectType();
-				TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes = { UEngineTypes::ConvertToObjectType(CollisionType) };
-
-				FIntVector VoxelArrayLocation = { x + VoxelBounds.X, y + VoxelBounds.Y, z + VoxelBounds.Z };
-				float Value = .0f;
-				TArray<FHitResult> Hits;
-				if (World->SweepMultiByObjectType(Hits, Start, End, Rotation.Quaternion(),
-					FCollisionObjectQueryParams::DefaultObjectQueryParam,
-					FCollisionShape::MakeBox(HalfBox), Params))
-				// if (UKismetSystemLibrary::BoxTraceMultiForObjects(World, Start, End, HalfBox, Rotation, ObjectTypes, true,
-				// 												  TArray<AActor*>(), EDrawDebugTrace::None, Hits, false))
-				{
-					if (FHitResult* Hit = Hits.FindByPredicate([&](const FHitResult& Other)
-					{
-						return Other.GetComponent() == Actor->GetRootComponent();
-					}))
-					{
-						FHitResult TraceHit;
-						bool bTraceHit = World->LineTraceSingleByObjectType(TraceHit, VoxelLocation, Hit->ImpactPoint,
-                            FCollisionObjectQueryParams::DefaultObjectQueryParam, Params);
-						if (bTraceHit && TraceHit.bStartPenetrating)
-						{
-							Value = 1.0f;
-						}
-						else
-						{
-							float Distance = FVector::Dist(VoxelLocation, Hit->ImpactPoint);
-							Value = FMath::GetMappedRangeValueClamped({ .0f, VoxelSize }, { 1.0f, .0f }, Distance);
-						}
-						
-						TotalVolume += Value * FMath::Pow(VoxelSize, 3.0f);
-					}					
-				}
-				
-				VoxelArray(VoxelArrayLocation) = Value;
-
-				// FLinearColor BoxColor = Value < 1.0f ? FLinearColor::Red : FLinearColor::White;
-				// UKismetSystemLibrary::DrawDebugBox(Actor, VoxelLocation, BoxSize, BoxColor, Actor->GetActorRotation());
-				// if (Value < 1.0f)
-				// {
-				// 	UKismetSystemLibrary::DrawDebugBox(Actor, VoxelLocation, BoxSize, FLinearColor::Red, Actor->GetActorRotation());
-				// }
-			}
-		}
-	}
-
-	float VolumeInCubicMeter = (TotalVolume / FMath::Pow(100.0f, 3.0f));
-	UE_LOG(LogTemp, Warning, TEXT("Total volume for '%s': %.2f m^3"), *Actor->GetName(), VolumeInCubicMeter);
-	return VoxelArray;
+	FVoxelMeshImporterRenderTargetCache Cache;
+	int32 NumLeaks;
+	const auto VoxelData = MakeVoxelShared<FVoxelDataAssetData>();
+	UVoxelMeshImporterLibrary::ConvertMeshToVoxels(MeshComponent, MeshData, Transform, Settings, Cache, *VoxelData,
+												   OutPositionOffset, NumLeaks);
+    
+    return VoxelData;
 }
 
 //////////////////////////////////////////////////
@@ -293,19 +229,21 @@ FIntVector SGVoxel::VoxelLineTrace(float Threshold)
 //////////////////////////////////////////////////
 FVector SGVoxel::TVoxelComponent::GetWorldLocation(const FIntVector& Position, const FTransform& Transform) const
 {
-	return Transform.TransformPosition(FVector(Position * GetVoxelSize()));
+	return Transform.TransformPosition(FVector(Position) * GetVoxelSize());
 }
 
-void SGVoxel::TVoxelComponent::SetupGroups(float TargetGroupSize, bool bShowDebug, UObject* WorldContext)
+void SGVoxel::TVoxelComponent::SetupGroups(float TargetGroupSize, bool bShowDebug, FTransform Transform, UObject* WorldContext)
 {
-	if (VoxelGroups.Num() > 0 && FMath::IsNearlyEqual(VoxelGroups[0].Size, TargetGroupSize, .1f))
+	if (VoxelGroups.Num() > 0)
 	{
 		if (WorldContext != nullptr && bShowDebug)
 		{
 			for (int32 i = 0; i < VoxelGroups.Num(); ++i)
 			{
+				const auto& Group = VoxelGroups[i];
+				
 				FVector Center;
-				FVector Extent;
+				FVector Extent = FVector(Group.Extent) * Group.Size;
 				FRotator Rotation;
 				UKismetSystemLibrary::DrawDebugBox(WorldContext, Center, Extent, FLinearColor::Red, Rotation);
 			}
@@ -322,7 +260,7 @@ void SGVoxel::TVoxelComponent::SetupGroups(float TargetGroupSize, bool bShowDebu
 	// ==> Width = 1000 cm
 	
 	// How many groups we need per axis
-	FVector GroupsPerAxis =
+	FIntVector GroupsPerAxis =
 	{
 		FMath::CeilToFloat(Width.X / TargetGroupSize),
 		FMath::CeilToFloat(Width.Y / TargetGroupSize),
@@ -345,8 +283,27 @@ void SGVoxel::TVoxelComponent::SetupGroups(float TargetGroupSize, bool bShowDebu
 			{
 				FIntVector Start = FIntVector(FVector(x, y, z) * VoxelsPerGroup);
 				FIntVector End = Start + FIntVector(FVector::OneVector * VoxelsPerGroup);
-				VoxelGroups.Add(FVoxelGroup(*this, Start, End));
+				FVoxelGroup Group = FVoxelGroup(*this, Start, End);
+				VoxelGroups.Add(Group);
+				//UE_LOG(LogTemp, Log, TEXT("Added group with volume %.1f cm^3"), Group.TotalVolume);
 			}
 		}
 	}
+}
+
+//////////////////////////////////////////////////
+float SGVoxel::TVoxelComponent::CalculateVolume()
+{
+	Volume = 0;
+	for (auto VoxelValue : VoxelData.GetRawValues())
+	{
+		float Value = VoxelValue.ToFloat();
+		if (Value <= .0f)
+		{
+			float VoxelVolume = FMath::Pow(VoxelSize, 3.0f) * UKismetMathLibrary::MapRangeClamped(Value, -1.0f, .0f, 1.0f, .5f);
+			Volume += VoxelVolume;
+		}						
+	}
+
+	return Volume;
 }
