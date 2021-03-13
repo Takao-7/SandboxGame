@@ -1,5 +1,6 @@
 ﻿
 #include "SGVoxel.h"
+#include "SandboxGame/SandboxGame.h"
 
 #include "VoxelSharedPtr.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -133,18 +134,6 @@ TArray<FIntVector> SGVoxel::GetVoxelCoordinatesInLine(const FIntVector& TraceSta
 }
 
 //////////////////////////////////////////////////
-TArray<float> SGVoxel::GetVoxels(const TArray<FIntVector>& Coordinates, const TVoxelComponent& VoxelComponent)
-{
-	TArray<float> Values;
-	for (auto& Coordinate : Coordinates)
-	{
-		VoxelComponent[Coordinate];
-	}
-
-	return Values;
-}
-
-//////////////////////////////////////////////////
 FIntVector SGVoxel::VoxelLineTrace(float Threshold)
 {
 	// Step one: Initialization
@@ -232,60 +221,69 @@ FVector SGVoxel::TVoxelComponent::GetWorldLocation(const FIntVector& Position, c
 	return Transform.TransformPosition(FVector(Position) * GetVoxelSize());
 }
 
-void SGVoxel::TVoxelComponent::SetupGroups(float TargetGroupSize, bool bShowDebug, FTransform Transform, UObject* WorldContext)
+void SGVoxel::TVoxelComponent::SetupGroups(float TargetGroupSize, bool bShowDebug, UStaticMeshComponent* MeshComp)
 {
-	if (VoxelGroups.Num() > 0)
+    // Debug groups if they are already setup 
+	if (MeshComp != nullptr && bShowDebug)
 	{
-		if (WorldContext != nullptr && bShowDebug)
+		FTransform Transform = MeshComp->GetComponentTransform();
+		
+		for (int32 i = 0; i < VoxelGroups.Num(); ++i)
 		{
-			for (int32 i = 0; i < VoxelGroups.Num(); ++i)
-			{
-				const auto& Group = VoxelGroups[i];
-				
-				FVector Center;
-				FVector Extent = FVector(Group.Extent) * Group.Size;
-				FRotator Rotation;
-				UKismetSystemLibrary::DrawDebugBox(WorldContext, Center, Extent, FLinearColor::Red, Rotation);
-			}
+			const auto& Group = VoxelGroups[i];
+			
+			FVector CoV = Transform.TransformPosition(Group.CenterOfVolume);
+			float Radius = Group.GetSphereRadius();
+			UKismetSystemLibrary::DrawDebugSphere(MeshComp, CoV, Radius, 24, FLinearColor::Red);
+
+			FVector Center = Transform.TransformPosition(FVector(Group.RelativeLocation));
+			FVector Extent = FVector::OneVector * (TargetGroupSize / 2.0f);
+			FRotator Rotation = Transform.Rotator();
+			UKismetSystemLibrary::DrawDebugBox(MeshComp, Center, Extent, FLinearColor::White, Rotation);
 		}
-		return;
 	}
+
+    if (VoxelGroups.Num() != 0)
+    {
+	    return;
+    }
 
 	VoxelGroups.Empty();
 
-	// This voxel component's total width, in cm
-	FVector Width = FVector(GetExtend()) * VoxelSize;
+	// This voxel component's total extent, in cm
+	FVector Extent = FVector(GetExtend()) * VoxelSize;
 
-	// VoxelSize == 10; Extend.X = 100
-	// ==> Width = 1000 cm
-	
-	// How many groups we need per axis
-	FIntVector GroupsPerAxis =
+	// How many groups we need per axis. Round up, so that each group size is not larger than the requested one.
+	// Also, make sure that we have at least 4 groups
+	FIntVector GroupsPerAxis
 	{
-		FMath::CeilToFloat(Width.X / TargetGroupSize),
-		FMath::CeilToFloat(Width.Y / TargetGroupSize),
-		FMath::CeilToFloat(Width.Z / TargetGroupSize)
+		FMath::Max(2, FMath::CeilToInt(Extent.X / TargetGroupSize)),
+		FMath::Max(2, FMath::CeilToInt(Extent.Y / TargetGroupSize)),
+		FMath::CeilToInt(Extent.Z / TargetGroupSize)
 	};
 
-	// TargetGroupSize = 100 cm
-	// ==> GroupsPerAxis = 1000 / 100 = 10
-
+    int32 TotalNumberOfGroups = GroupsPerAxis.X * GroupsPerAxis.Y * GroupsPerAxis.Z;
+	
 	/* How many of OUR voxels are represented by a single group */
-	FVector VoxelsPerGroup = Width / (GroupsPerAxis * VoxelSize);
-
-	// 1000 cm / (10 * 10) = 10	
-
+	FIntVector VoxelsPerGroup = FIntVector(Extent / (FVector(GroupsPerAxis) * VoxelSize));
+	
+	VoxelGroups.SetNum(TotalNumberOfGroups);
 	for (int32 x = 0; x < GroupsPerAxis.X; ++x)
 	{
-		for (int32 y = 0; y < GroupsPerAxis.Z; ++y)
+		for (int32 y = 0; y < GroupsPerAxis.Y; ++y)
 		{
 			for (int32 z = 0; z < GroupsPerAxis.Z; ++z)
 			{
-				FIntVector Start = FIntVector(FVector(x, y, z) * VoxelsPerGroup);
-				FIntVector End = Start + FIntVector(FVector::OneVector * VoxelsPerGroup);
+				int32 Index = x + y * GroupsPerAxis.X + z * GroupsPerAxis.X * GroupsPerAxis.Y;
+				FIntVector Start = (FIntVector(x, y, z) * VoxelsPerGroup) + GetOffset();
+				FIntVector End = Start + FIntVector(1) * VoxelsPerGroup;
+
+				FVector BaseOffset = -FVector(GroupsPerAxis - 1) * .5f * TargetGroupSize + CenterOffset;
+				FIntVector Offset = FIntVector(BaseOffset + FVector(x, y, z) * TargetGroupSize);
+				
 				FVoxelGroup Group = FVoxelGroup(*this, Start, End);
-				VoxelGroups.Add(Group);
-				//UE_LOG(LogTemp, Log, TEXT("Added group with volume %.1f cm^3"), Group.TotalVolume);
+				Group.RelativeLocation = Offset;
+				VoxelGroups[Index] = Group;
 			}
 		}
 	}
@@ -306,4 +304,10 @@ float SGVoxel::TVoxelComponent::CalculateVolume()
 	}
 
 	return Volume;
+}
+
+//////////////////////////////////////////////////
+float SGVoxel::FVoxelGroup::GetSphereRadius() const
+{
+	return SGMath::NthRoot(Volume * (3.0f / 4.0f) / PI, 3);
 }

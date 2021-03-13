@@ -95,9 +95,6 @@ namespace SGVoxel
 	/* Given a start and end location, return all voxel coordinates which are intersecting with the line */
 	TArray<FIntVector> GetVoxelCoordinatesInLine(const FIntVector& TraceStart, const FIntVector& TraceEnd);
 
-	/** Return all voxel values for the given coordinates (in voxel space) */
-	TArray<float> GetVoxels(const TArray<FIntVector>& Coordinates, const struct TVoxelComponent& VoxelComponent);
-
 	/**
 	 * From:  http://www.cse.yorku.ca/~amana/research/grid.pdf
 	 *
@@ -113,14 +110,20 @@ namespace SGVoxel
 		TVoxelComponent(){}
 		TVoxelComponent(const AActor* Actor, float VoxelSize)
 		{
-			VoxelData = *VoxelizeMesh(Actor->FindComponentByClass<UStaticMeshComponent>(), VoxelSize, PositionOffset); 
+			UStaticMeshComponent* MeshComponent = Actor->FindComponentByClass<UStaticMeshComponent>();
+			VoxelData = *VoxelizeMesh(MeshComponent, VoxelSize, VoxelIndexOffset);
 			this->VoxelSize = VoxelSize;
+			MeshRef = MeshComponent->GetStaticMesh();
+			CenterOffset = MeshComponent->Bounds.Origin - MeshComponent->GetComponentLocation();
+			
 			CalculateVolume();
+
+			UE_LOG(LogTemp, Warning, TEXT("%s: Voxel volume: %.1f"), *MeshComponent->GetStaticMesh()->GetName(), GetVolume_m3());
 		}
 
 		/**
 		 * Iterate over every voxel
-		 * Position is in voxel space and is NOT the index for the internal data array.
+		 * Position is in voxel space
 		 */
 		void ForEach(TFunction<void (FIntVector Position, float Value)> Lambda) const
 		{
@@ -131,7 +134,7 @@ namespace SGVoxel
 					for (int32 y = 0; y < GetExtend().Y; ++y)
 					{
 						FIntVector Index = { x, y, z };
-						FIntVector LocalPosition = Index + PositionOffset;
+						FIntVector LocalPosition = Index + VoxelIndexOffset;
 						Lambda(LocalPosition, VoxelData.GetValue(x, y, z, FVoxelValue::Empty()).ToFloat());
 					}
 				}
@@ -140,7 +143,7 @@ namespace SGVoxel
 
 		/**
 		* Iterate over every voxel in the given horizontal layer
-		* Position is in voxel space and is NOT the index for the internal data array.
+		* Position is in voxel space
 		*/
 		void ForEach(TFunction<void (FIntVector Position, float Value)> Lambda, int32 Z) const
 		{
@@ -149,7 +152,7 @@ namespace SGVoxel
 				for (int32 y = 0; y < GetExtend().Y; ++y)
 				{
 					FIntVector Index = { x, y, Z };
-					FIntVector LocalPosition = Index + PositionOffset;
+					FIntVector LocalPosition = Index + VoxelIndexOffset;
 					Lambda(LocalPosition, VoxelData.GetValue(x, y, Z, FVoxelValue::Empty()).ToFloat());
 				}
 			}
@@ -158,11 +161,7 @@ namespace SGVoxel
 		/** Return the world location for a voxel position */
 		FVector GetWorldLocation(const FIntVector& Position, const FTransform& Transform) const;
 
-		void SetupGroups(float TargetGroupSize, bool bShowDebug = false, FTransform Transform = FTransform::Identity,
-						 UObject* WorldContext = nullptr);
-
-		/** Groups voxels together in groups */
-		void CreateVoxelGroups();
+		void SetupGroups(float TargetGroupSize, bool bShowDebug = false, UStaticMeshComponent* MeshComp = nullptr);
 
 		float GetVoxelSize() const
 		{
@@ -174,26 +173,44 @@ namespace SGVoxel
 			return VoxelData.GetSize();
 		}
 
+		FIntVector GetOffset() const { return VoxelIndexOffset; }
+
 		/** Get the volume in cubic meters */
-		float GetVolume_m3() const { return (Volume / FMath::Pow(100.0f, 3.0f)); };
+		float GetVolume_m3() const { return (Volume / FMath::Pow(100.0f, 3.0f)); }
 
 		/** Get the volume in cubic centimeters */
-		float GetVolume_cm3() const { return Volume; };
+		float GetVolume_cm3() const { return Volume; }
 
 		float CalculateVolume();
 
 		float operator[] (const FIntVector& Position) const
 		{
-			return VoxelData.GetValue(Position.X, Position.Y, Position.Z, FVoxelValue::Empty()).ToFloat();
+			FIntVector Index = Position - GetOffset();
+			return VoxelData.GetValue(Index.X, Index.Y, Index.Z, FVoxelValue::Empty()).ToFloat();
 		}
 
-		FVoxelDataAssetData VoxelData;
-		FIntVector PositionOffset;
-	
+		float GetValue(int32 X, int32 Y, int32 Z) const
+		{
+			return operator[]({ X, Y, Z });
+		}
+
+		const TArray<struct FVoxelGroup>& GetGroups() const { return VoxelGroups; }
+
 	private:
-		/* Volume in cm^3 */
+		FVoxelDataAssetData VoxelData;
+
+		/* Offset for converting a voxel position to the internal array coordinates */
+		FIntVector VoxelIndexOffset;
+	
+		/* In cm^3 */
 		float Volume = INDEX_NONE;
 		float VoxelSize = 10.0f;
+
+		/* Pointer to the mesh that we are based on (if any) */
+		TSoftObjectPtr<UStaticMeshComponent> MeshRef;
+
+		FVector CenterOffset = FVector::ZeroVector;
+
 		TArray<struct FVoxelGroup> VoxelGroups;
 	};
 
@@ -203,10 +220,13 @@ namespace SGVoxel
 	struct FVoxelGroup
 	{
 		FVoxelGroup(){}
+		/**
+		 * @param VoxelComponent
+		 * @param Start				In voxel space
+		 * @param End				In voxel space
+		 */
 		FVoxelGroup(const TVoxelComponent& VoxelComponent, FIntVector Start, FIntVector End)
-		{
-			Extent = End - Start;
-			
+		{			
 			FVector SumWeightedVolumes = FVector::ZeroVector;
 			for (int32 z = Start.Z; z < End.Z; ++z)
 			{
@@ -214,33 +234,45 @@ namespace SGVoxel
 				{
 					for (int32 y = Start.Y; y < End.Y; ++y)
 					{
-						FIntVector Index = { x, y, z };
-						FIntVector LocalPosition = Index + VoxelComponent.PositionOffset;
-
 						// A negative value is inside, so we have to convert it into a positive.
-						// Values > 0 are outside the mesh, so they don't add to the volume 
-						float Value = VoxelComponent.VoxelData.GetValue(x, y, z, FVoxelValue::Empty()).ToFloat();
-						Value = -FMath::Min(Value, .0f);
-						
-						float Volume = FMath::Pow(VoxelComponent.GetVoxelSize(), 3.0f) * Value;
-						TotalVolume += Volume;
-						SumWeightedVolumes += FVector(LocalPosition) * Volume;
+						// Values > 0 are outside the mesh, so they don't add to the volume
+						FIntVector Index = FIntVector(x, y, z);
+						float Value = VoxelComponent[Index];
+						if (Value <= .0f)
+						{
+							Value = FMath::GetMappedRangeValueClamped({ -1.0f, .0f }, { 1.0f, .5f }, Value);
+
+							float VoxelVolume = FMath::Pow(VoxelComponent.GetVoxelSize(), 3.0f) * Value;
+							Volume += VoxelVolume;
+
+							FVector Position = FVector(Index) * VoxelComponent.GetVoxelSize();
+							SumWeightedVolumes += Position * VoxelVolume;
+						}
 					}
 				}
 			}
-			
-			CenterOfVolume = (1.0f / TotalVolume) * SumWeightedVolumes;
+
+			if (Volume > .0f)
+			{
+				CenterOfVolume = (1.0f / Volume) * SumWeightedVolumes;				
+			}
+			else
+			{
+				CenterOfVolume = FVector(End - Start) * .5f + FVector(VoxelComponent.GetOffset());
+				CenterOfVolume *= VoxelComponent.GetVoxelSize();
+			}
 		}
-		
+
+		/** Return a sphere radius, suitable for our volume */
+		float GetSphereRadius() const;
+
+		/* Relative to parent voxel component's center */
 		FVector CenterOfVolume = -FVector::OneVector;
-		FVector RelativeLocation = FVector::ZeroVector;
+
+		/* Our location, relative to our parent voxel component's center */
+		FIntVector RelativeLocation = FIntVector::ZeroValue;
 
 		/* Actual volume */
-		float TotalVolume = .0f;
-
-		/* Voxel size */
-		float Size = INDEX_NONE;
-
-		FIntVector Extent;
+		float Volume = .0f;
 	};
 }
