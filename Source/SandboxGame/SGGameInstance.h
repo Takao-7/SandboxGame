@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "ECSGameInstance.h"
 #include "SGGameInstance.generated.h"
 
 
@@ -11,7 +10,7 @@
  * 
  */
 UCLASS()
-class SANDBOXGAME_API USGGameInstance : public UECSGameInstance
+class SANDBOXGAME_API USGGameInstance : public UGameInstance
 {
 	GENERATED_BODY()
 

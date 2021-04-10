@@ -2,10 +2,8 @@
 
 
 #include "SGGameInstance.h"
-#include "Systems/SGBuoyancySystem.h"
 
 void USGGameInstance::Init()
 {
     Super::Init();
-    AddSystem(SandboxGameCoreSystems::BuoyancySystem, ESystemTickingGroup::PrePhysics);
 }
